@@ -1,0 +1,81 @@
+# IoT messaging with MQTT: a broker, and a few pretend sensors in a house that publish a
+# reading every second to topics such as home/livingroom/temperature.
+#
+# Your copy is the only thing you may use, and it is the only thing you can reach: this lab
+# has no way out to the internet, so nothing you try can touch anybody else's machine. It has
+# no web page either, so use the lab's terminal. It reaches the broker's own tools with docker
+# exec, for example
+#   docker exec broker mosquitto_sub -t 'home/#' -v -C 8 -W 10
+# which listens to every topic under home and stops after 8 messages or 10 seconds. Write your
+# own with mosquitto_pub, for example
+#   docker exec broker mosquitto_pub -t home/notes/first -r -m hello
+#
+# The sensors publish to home/livingroom/temperature, home/livingroom/humidity,
+# home/kitchen/temperature and home/door/state. The kitchen temperature and the door state are
+# retained: the broker keeps the last one and hands it to anybody who subscribes.
+#
+# Real devices connect over a network with a name and a password and an encrypted connection.
+# This lab leaves all of that out: the broker lets anyone inside the lab read and write
+# anything, which is fine only because nothing outside your copy can reach it.
+#
+# Hand in the commands you ran and what they printed: one that reads every topic under home,
+# one that reads only the temperatures, one that reads a retained message, and one message of
+# your own, with a sentence on what a retained message is for.
+
+services:
+  broker:
+    image: eclipse-mosquitto:2
+    user: "1883"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        printf 'listener 1883\nallow_anonymous true\npersistence false\n' > /tmp/mosquitto.conf
+        exec mosquitto -c /tmp/mosquitto.conf
+    expose: ["1883"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    labels:
+      lab.title: MQTT broker
+
+  sensors:
+    image: eclipse-mosquitto:2
+    user: "1883"
+    depends_on:
+      broker:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        i=0
+        while true; do
+          t=$$((20 + i % 4))
+          h=$$((40 + (i * 3) % 10))
+          k=$$((18 + i % 3))
+          if [ $$(( (i / 5) % 2 )) -eq 0 ]; then d=open; else d=closed; fi
+          mosquitto_pub -h broker -t home/livingroom/temperature -m "$$t"
+          mosquitto_pub -h broker -t home/livingroom/humidity -m "$$h"
+          mosquitto_pub -h broker -t home/kitchen/temperature -r -m "$$k"
+          mosquitto_pub -h broker -t home/door/state -r -m "$$d"
+          i=$$((i + 1))
+          sleep 1
+        done
+    healthcheck:
+      test: ["CMD-SHELL", "pidof sleep || true"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    labels:
+      lab.title: Sensors
